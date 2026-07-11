@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GRAPH VIEW — AI 통제실</title>
+<style>
+  :root{--bg:#05080a;--edge:#123028;--grn:#31e17f;--cyn:#2fe0e0;--amb:#f5b52a;--red:#ff5964;--hud:#cfeee2;--huddim:#6f9c8e;}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--hud);overflow:hidden;
+    font-family:"Cascadia Code","Consolas","맑은 고딕",monospace}
+  .top{position:fixed;top:0;left:0;right:0;height:48px;display:flex;align-items:center;gap:16px;
+    padding:0 18px;z-index:10;border-bottom:1px solid var(--edge);background:rgba(5,10,10,.8)}
+  .top h1{font-size:15px;letter-spacing:3px;margin:0;color:#eafff6;text-shadow:0 0 8px var(--grn)}
+  .nav a{color:var(--huddim);text-decoration:none;font-size:12px;letter-spacing:1px;margin-left:14px;padding:5px 10px;border:1px solid transparent;border-radius:3px}
+  .nav a.on{color:var(--grn);border-color:var(--edge)}
+  .nav a:hover{color:var(--hud)}
+  .legend{margin-left:auto;font-size:11px;color:var(--huddim);display:flex;gap:14px}
+  .legend b{color:var(--hud);font-weight:400}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:1px}
+  canvas{display:block}
+  .tip{position:fixed;pointer-events:none;background:#000;border:1px solid var(--edge);border-radius:4px;
+    padding:8px 11px;font-size:11.5px;max-width:280px;opacity:0;transition:.1s;z-index:20;line-height:1.5}
+  .hint{position:fixed;bottom:12px;left:18px;font-size:11px;color:var(--huddim);z-index:10}
+  .offnote{position:fixed;left:0;right:0;bottom:0;background:#2a0b0e;color:#ff9ba2;text-align:center;padding:6px;font-size:11px;display:none}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>◈ KNOWLEDGE GRAPH</h1>
+  <div class="nav"><a href="dashboard.html">OFFICE</a><a href="graph.html" class="on">GRAPH</a></div>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--amb)"></span>프로젝트</span>
+    <span><span class="dot" style="background:var(--grn)"></span>활성</span>
+    <span><span class="dot" style="background:var(--cyn)"></span>대기</span>
+    <span><span class="dot" style="background:#4a5f57"></span>유휴</span>
+    <span><span class="dot" style="background:#9a86ff"></span>메모리</span>
+    <span id="cnt"></span>
+  </div>
+</div>
+<canvas id="cv"></canvas>
+<div class="tip" id="tip"></div>
+<div class="hint">드래그=이동 · 휠=확대/축소 · 노드 호버=정보 · 노드 드래그=고정</div>
+<div class="offnote" id="offnote">⚠ 서버 미연결 — 스냅샷 표시 (python control_room.py 로 실시간)</div>
+
+<script id="snap" type="application/json">{}</script>
+<script>
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d'), tip=document.getElementById('tip');
+let W,H,DPR; function resize(){DPR=devicePixelRatio||1;W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;cv.style.width=W+'px';cv.style.height=H+'px';ctx.setTransform(DPR,0,0,DPR,0,0);}
+addEventListener('resize',resize); resize();
+function fmt(n){n=+n||0;if(n>=1e9)return(n/1e9).toFixed(2)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return''+n;}
+function tier(a){const m=a.mins_since;if(m==null)return'offline';if(m<720)return'active';if(m<1440)return'standby';if(m<10080)return'idle';return'offline';}
+const COL={active:'#31e17f',standby:'#2fe0e0',idle:'#4a5f57',offline:'#7a3b40'};
+
+let nodes=[],links=[],view={x:0,y:0,k:1};
+function build(s){
+  const ag=s.agents; nodes=[];links=[];
+  const root={id:'ROOT',t:'root',label:'AGENT OFFICE',r:16,x:W/2,y:H/2,vx:0,vy:0,fx:W/2,fy:H/2};
+  nodes.push(root);
+  const hubs={};
+  const byp={}; ag.forEach(a=>byp[a.project]=(byp[a.project]||0)+1);
+  Object.keys(byp).forEach((p,i)=>{
+    const ang=i/Object.keys(byp).length*6.283, R=Math.min(W,H)*0.28;
+    const h={id:'P:'+p,t:'proj',label:p,cnt:byp[p],r:7+Math.min(9,byp[p]),
+      x:W/2+Math.cos(ang)*R+(Math.random()-.5)*40,y:H/2+Math.sin(ang)*R+(Math.random()-.5)*40,vx:0,vy:0};
+    hubs[p]=h; nodes.push(h); links.push({a:root,b:h,len:R*0.7});
+  });
+  ag.forEach(a=>{
+    const h=hubs[a.project]; const tg=tier(a);
+    const n={id:'S:'+a.id,t:'sess',label:a.topic,proj:a.project,tier:tg,col:COL[tg],out:a.out,msgs:a.messages,model:a.model,mins:a.mins_since,
+      r:3+Math.min(6,Math.log10((a.out||10)+10)),x:h.x+(Math.random()-.5)*80,y:h.y+(Math.random()-.5)*80,vx:0,vy:0};
+    nodes.push(n); links.push({a:h,b:n,len:46});
+  });
+  // MEMORY 지식노드 (office.memory)
+  const mems=(s.office&&s.office.memory)||[];
+  if(mems.length){
+    const mhub={id:'M:HUB',t:'mhub',label:'MEMORY',r:12,x:W/2+120,y:H/2+140,vx:0,vy:0};
+    nodes.push(mhub); links.push({a:root,b:mhub,len:170});
+    const midx={};
+    mems.forEach(mm=>{
+      const n={id:'M:'+mm.name,t:'mem',label:mm.name,desc:mm.desc||'',nlinks:(mm.links||[]).length,
+        r:3.5+Math.min(4,(mm.links||[]).length),x:mhub.x+(Math.random()-.5)*160,y:mhub.y+(Math.random()-.5)*160,vx:0,vy:0};
+      midx[mm.name]=n; nodes.push(n); links.push({a:mhub,b:n,len:60});
+    });
+    mems.forEach(mm=>(mm.links||[]).forEach(l=>{
+      if(midx[l]&&midx[mm.name]) links.push({a:midx[mm.name],b:midx[l],len:50,cross:true});
+    }));
+  }
+  document.getElementById('cnt').innerHTML='<b>'+ag.length+'</b> 유닛 · <b>'+Object.keys(byp).length+'</b> 프로젝트 · <b>'+mems.length+'</b> 메모리';
+}
+function step(){
+  // repulsion
+  for(let i=0;i<nodes.length;i++){const a=nodes[i];if(a.fx!=null){a.x=a.fx;a.y=a.fy;a.vx=a.vy=0;continue;}
+    for(let j=i+1;j<nodes.length;j++){const b=nodes[j];
+      let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy||1,d=Math.sqrt(d2);
+      const f=(a.r+b.r+60)*(a.r+b.r+60)/d2*0.9; const fx=dx/d*f,fy=dy/d*f;
+      a.vx+=fx;a.vy+=fy;b.vx-=fx;b.vy-=fy;}}
+  // springs
+  links.forEach(l=>{let dx=l.b.x-l.a.x,dy=l.b.y-l.a.y,d=Math.hypot(dx,dy)||1;
+    const f=(d-(l.len||50))*0.02,fx=dx/d*f,fy=dy/d*f;
+    if(l.a.fx==null){l.a.vx+=fx;l.a.vy+=fy;} if(l.b.fx==null){l.b.vx-=fx;l.b.vy-=fy;}});
+  // gravity to center + integrate
+  nodes.forEach(n=>{if(n.fx!=null)return;
+    n.vx+=(W/2-n.x)*0.0008;n.vy+=(H/2-n.y)*0.0008;
+    n.vx*=0.86;n.vy*=0.86;n.x+=n.vx;n.y+=n.vy;});
+}
+function draw(){
+  ctx.clearRect(0,0,W,H); ctx.save(); ctx.translate(view.x,view.y); ctx.scale(view.k,view.k);
+  // links
+  ctx.lineWidth=0.6/view.k;
+  links.forEach(l=>{
+    ctx.strokeStyle=l.cross?'rgba(154,134,255,.3)':(l.b.t==='proj'?'rgba(47,224,224,.22)':(l.b.t==='mem'||l.b.t==='mhub')?'rgba(154,134,255,.16)':'rgba(49,225,127,.13)');
+    ctx.beginPath();ctx.moveTo(l.a.x,l.a.y);ctx.lineTo(l.b.x,l.b.y);ctx.stroke();});
+  // nodes + 시맨틱 줌 LOD
+  const Z=view.k;
+  nodes.forEach(n=>{
+    let c=n.t==='root'?'#f5b52a':n.t==='proj'?'#2fe0e0':(n.t==='mhub'||n.t==='mem')?'#9a86ff':n.col;
+    ctx.shadowColor=c;ctx.shadowBlur=(n.t==='sess'||n.t==='mem'?7:14);
+    ctx.fillStyle=c;ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,6.283);ctx.fill();
+    ctx.shadowBlur=0;
+    const isHub=(n.t==='root'||n.t==='proj'||n.t==='mhub');
+    if(isHub){ctx.fillStyle=n.t==='root'?'#fff':(n.t==='mhub'?'#d9d2ff':'#bff6f0');
+      ctx.font=(n.t==='root'?13:11)+'px Consolas';ctx.textAlign='center';
+      ctx.fillText(n.label,n.x,n.y-n.r-6/Z);}
+    else if(Z>=1.7){  // 확대 1단계: 리프 이름 표시
+      ctx.fillStyle=n.t==='mem'?'#cfc6ff':'#bfe9d8';
+      ctx.font=(9/Math.min(Z,2.4))+'px Consolas';ctx.textAlign='center';
+      const lab=(n.label||'').slice(0, Z>=2.6?42:20);
+      ctx.fillText(lab,n.x,n.y-n.r-4/Z);
+      if(Z>=2.6){  // 확대 2단계: 상세(토큰/설명) 표시
+        ctx.fillStyle='rgba(207,238,226,.62)';
+        ctx.font=(6.5/Math.min(Z,3))+'px Consolas';
+        const sub=n.t==='sess'?(fmt(n.out)+' tok · '+(n.msgs||0)+'턴'):(n.desc||'').slice(0,46);
+        if(sub) ctx.fillText(sub,n.x,n.y+n.r+7/Z);
+      }
+    }
+  });
+  ctx.restore();
+}
+function loop(){step();draw();requestAnimationFrame(loop);}
+
+// interaction
+let drag=null,pan=null;
+function toWorld(mx,my){return {x:(mx-view.x)/view.k,y:(my-view.y)/view.k};}
+function pick(mx,my){const w=toWorld(mx,my);let best=null,bd=1e9;
+  nodes.forEach(n=>{const d=Math.hypot(n.x-w.x,n.y-w.y);if(d<n.r+6&&d<bd){bd=d;best=n;}});return best;}
+cv.onmousedown=e=>{const n=pick(e.clientX,e.clientY);
+  if(n&&n.t!=='root'){drag=n;n.fx=n.x;n.fy=n.y;}else pan={x:e.clientX-view.x,y:e.clientY-view.y};};
+cv.onmousemove=e=>{
+  if(drag){const w=toWorld(e.clientX,e.clientY);drag.fx=w.x;drag.fy=w.y;return;}
+  if(pan){view.x=e.clientX-pan.x;view.y=e.clientY-pan.y;return;}
+  const n=pick(e.clientX,e.clientY);
+  if(n){tip.style.opacity=1;tip.style.left=Math.min(W-290,e.clientX+14)+'px';tip.style.top=(e.clientY+12)+'px';
+    tip.innerHTML=n.t==='sess'?`<b>${esc(n.label)}</b><br>${n.proj} · ${n.tier.toUpperCase()}<br>출력 ${fmt(n.out)} · ${n.msgs}턴 · ${n.model.includes('opus')?'Opus':n.model.includes('fable')?'Fable':n.model}`
+      :n.t==='proj'?`<b>${esc(n.label)}</b><br>${n.cnt} 유닛(세션)`:`<b>AGENT OFFICE</b><br>전체 통합 루트`;
+    cv.style.cursor='pointer';
+  }else{tip.style.opacity=0;cv.style.cursor=pan?'grabbing':'grab';}
+};
+addEventListener('mouseup',()=>{if(drag){/* keep pinned briefly then release */const d=drag;setTimeout(()=>{if(d)d.fx=d.fy=null;},1200);}drag=null;pan=null;});
+cv.onwheel=e=>{e.preventDefault();const s=e.deltaY<0?1.12:0.89;const mx=e.clientX,my=e.clientY;
+  view.x=mx-(mx-view.x)*s;view.y=my-(my-view.y)*s;view.k*=s;};
+function esc(s){return(s||'').replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+
+async function load(){
+  try{const s=await fetch('/api/status').then(r=>r.json());document.getElementById('offnote').style.display='none';build(s);}
+  catch(e){try{const s=JSON.parse(document.getElementById('snap').textContent);document.getElementById('offnote').style.display='block';build(s);}catch(_){}}
+}
+load().then(loop);
+</script>
+<script>if(location.protocol==="file:"){document.querySelectorAll("a[href='/']").forEach(a=>a.href="dashboard.html");document.querySelectorAll("a[href='/graph']").forEach(a=>a.href="graph.html");}</script>
+</body>
+</html>

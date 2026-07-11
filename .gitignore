@@ -1,0 +1,7 @@
+# 런타임 데이터 (사용자 로컬 전용 — 절대 커밋 금지)
+dashboard_data.json
+commands.jsonl
+agent_*.log
+config.json
+__pycache__/
+*.pyc
