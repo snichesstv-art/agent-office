@@ -3,7 +3,9 @@
 Claude Code로 작업한 **모든 세션을 "에이전트"로 시각화**하는 로컬 대시보드입니다.
 J.A.R.V.I.S 스타일 관제실에서 현황을 감시하고, 에이전트에게 명령을 내릴 수 있습니다.
 
-![Agent Office](스크린샷을 여기에)
+![Agent Office HUD](docs/screenshot-office.png)
+
+![Knowledge Graph](docs/screenshot-graph.png)
 
 ## 뭐가 보이나요?
 
